@@ -69,9 +69,9 @@ class PlanComplexCartesianSteps(Node):
             {"dx": dx, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
             {"dx": 0.0, "dy": dy, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
             {"dx": 0.0, "dy": 0.0, "dz": dz, "r": 0.0, "p": 0.0, "y": 0.0},
-            {"dx": 0.0, "dy": 0.0, "dz": 0.0, "r": droll, "p": 0.0, "y": 0.0},
-            {"dx": 0.0, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": dpitch, "y": 0.0},
-            {"dx": 0.0, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": 0.0, "y": dyaw},
+            {"dx": 0.0, "dy": 0.0, "dz": 0.0, "r": droll, "p": dpitch, "y": dyaw},
+            # {"dx": 0.0, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": dpitch, "y": 0.0},
+            # {"dx": 0.0, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": 0.0, "y": dyaw},
         ]
 
         # --- Step 4: Execute each relative move ---
