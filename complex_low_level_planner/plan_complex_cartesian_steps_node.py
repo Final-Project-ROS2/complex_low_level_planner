@@ -76,8 +76,8 @@ class PlanComplexCartesianSteps(Node):
         
         # --- Step 3: Split into multiple single-axis moves ---
         steps = [
-            {"dx": dx, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
             {"dx": 0.0, "dy": dy, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
+            {"dx": dx, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
             {"dx": 0.0, "dy": 0.0, "dz": 0.0, "r": relative_rpy[0], "p": relative_rpy[1], "y": relative_rpy[2]},
             {"dx": 0.0, "dy": 0.0, "dz": dz, "r": 0.0, "p": 0.0, "y": 0.0},
         ]
