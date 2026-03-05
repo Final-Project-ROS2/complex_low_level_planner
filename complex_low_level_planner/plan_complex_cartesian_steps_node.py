@@ -4,7 +4,7 @@ from rclpy.action import ActionServer, ActionClient, GoalResponse, CancelRespons
 from rclpy.task import Future
 
 from geometry_msgs.msg import Pose
-from custom_interfaces.action import MoveitRelative, GetCurrentPose
+from custom_interfaces.action import MoveitRelative, GetCurrentPose, MoveitPose
 
 import math
 
@@ -26,6 +26,7 @@ class PlanComplexCartesianSteps(Node):
         # Action clients
         self.get_current_pose_client = ActionClient(self, GetCurrentPose, '/get_current_pose')
         self.plan_relative_client = ActionClient(self, MoveitRelative, '/plan_cartesian_relative')
+        self.plan_pose_client = ActionClient(self, MoveitPose, '/plan_cartesian_execute_pose')
 
         self.get_logger().info("✅ plan_complex_cartesian_steps_node started.")
 
@@ -54,31 +55,11 @@ class PlanComplexCartesianSteps(Node):
         dy = target_pose.position.y - current_pose.position.y
         dz = target_pose.position.z - current_pose.position.z
         
-        # Compute relative rotation as a quaternion
-        # q_relative = q_current^-1 * q_target
-        q_current = [
-            current_pose.orientation.x,
-            current_pose.orientation.y,
-            current_pose.orientation.z,
-            current_pose.orientation.w
-        ]
-        q_target = [
-            target_pose.orientation.x,
-            target_pose.orientation.y,
-            target_pose.orientation.z,
-            target_pose.orientation.w
-        ]
-        
-        q_relative = self.quaternion_multiply(self.quaternion_inverse(q_current), q_target)
-        
-        # Convert the RELATIVE rotation to Euler for the move command
-        relative_rpy = self.quaternion_to_euler_from_list(q_relative)
-        
         # --- Step 3: Split into multiple single-axis moves ---
         steps = [
             {"dx": 0.0, "dy": dy, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
             {"dx": dx, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
-            {"dx": 0.0, "dy": 0.0, "dz": 0.0, "r": relative_rpy[0], "p": relative_rpy[1], "y": relative_rpy[2]},
+            {"dx": 0.0, "dy": 0.0, "dz": 0.0, "orientation": target_pose.orientation},  # orientation move as a separate step
             {"dx": 0.0, "dy": 0.0, "dz": dz, "r": 0.0, "p": 0.0, "y": 0.0},
         ]
         
@@ -87,9 +68,12 @@ class PlanComplexCartesianSteps(Node):
             if all(abs(v) < 1e-6 for v in step.values()):
                 continue  # skip near-zero moves
             self.get_logger().info(f"➡️ Step {i+1}: Moving by {step}")
-            success = await self.call_plan_relative(
-                step["dx"], step["dy"], step["dz"],
-                step["r"], step["p"], step["y"]
+            if "orientation" in step:
+                success = await self.call_plan_pose(step["orientation"])
+            else:
+                success = await self.call_plan_relative(
+                    step["dx"], step["dy"], step["dz"],
+                    step["r"], step["p"], step["y"]
             )
             if not success:
                 goal_handle.abort()
@@ -142,6 +126,26 @@ class PlanComplexCartesianSteps(Node):
 
         if not goal_handle.accepted:
             self.get_logger().error("❌ /plan_cartesian_relative goal rejected.")
+            return False
+
+        result_future = goal_handle.get_result_async()
+        result = await result_future
+        return result.result.success
+    
+    async def call_plan_pose(self, target_pose):
+        """Call /plan_cartesian_execute_pose once and return success."""
+        if not self.plan_pose_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error("❌ /plan_cartesian_execute_pose server not available.")
+            return False
+
+        goal_msg = MoveitPose.Goal()
+        goal_msg.target_pose = target_pose
+
+        goal_future = self.plan_pose_client.send_goal_async(goal_msg)
+        goal_handle = await goal_future
+
+        if not goal_handle.accepted:
+            self.get_logger().error("❌ /plan_cartesian_execute_pose goal rejected.")
             return False
 
         result_future = goal_handle.get_result_async()
