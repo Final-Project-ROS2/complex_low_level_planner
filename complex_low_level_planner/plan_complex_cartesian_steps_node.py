@@ -4,7 +4,10 @@ from rclpy.action import ActionServer, ActionClient, GoalResponse, CancelRespons
 from rclpy.task import Future
 
 from geometry_msgs.msg import Pose
-from custom_interfaces.action import MoveitRelative, GetCurrentPose, MoveitPose
+from custom_interfaces.action import MoveitRelative, GetCurrentPose, MoveitPose, GetJointAngles, SetJointAngles
+
+# Action Server
+from custom_interfaces.action import PlanComplexCartesianSteps, PlanPoseTheta
 
 import math
 
@@ -13,8 +16,7 @@ class PlanComplexCartesianSteps(Node):
         super().__init__('plan_complex_cartesian_steps_node')
 
         # Action server
-        from custom_interfaces.action import PlanComplexCartesianSteps
-        self._action_server = ActionServer(
+        self._plan_complex_cartesian_steps_server = ActionServer(
             self,
             PlanComplexCartesianSteps,
             '/plan_complex_cartesian_steps',
@@ -23,12 +25,25 @@ class PlanComplexCartesianSteps(Node):
             cancel_callback=self.cancel_callback
         )
 
+        self._plan_pose_theta_server = ActionServer(
+            self,
+            PlanPoseTheta,
+            '/plan_pose_theta',
+            execute_callback=self.execute_plan_pose_theta_callback,
+            goal_callback=self.goal_plan_pose_theta_callback,
+            cancel_callback=self.cancel_plan_pose_theta_callback
+        )
+
         # Action clients
         self.get_current_pose_client = ActionClient(self, GetCurrentPose, '/get_current_pose')
+        self.get_joint_angles_client = ActionClient(self, GetJointAngles, '/get_joint_angles')
+        self.set_joint_angles_client = ActionClient(self, SetJointAngles, '/set_joint_angles')
         self.plan_relative_client = ActionClient(self, MoveitRelative, '/plan_cartesian_relative')
         self.plan_pose_client = ActionClient(self, MoveitPose, '/plan_cartesian_execute_pose')
 
         self.get_logger().info("✅ plan_complex_cartesian_steps_node started.")
+    
+    # --- /plan_complex_cartesian_steps callbacks ---
 
     def goal_callback(self, goal_request):
         self.get_logger().info('🎯 Received goal request for complex cartesian steps.')
@@ -84,6 +99,83 @@ class PlanComplexCartesianSteps(Node):
         goal_handle.succeed()
         return self.make_result(True)
 
+    # --- /plan_pose_theta callbacks ---
+
+    def goal_plan_pose_theta_callback(self, goal_request):
+        self.get_logger().info('🎯 Received goal request for plan_pose_theta.')
+        return GoalResponse.ACCEPT
+
+    def cancel_plan_pose_theta_callback(self, goal_handle):
+        self.get_logger().info('⚠️ Received request to cancel the goal.')
+        return CancelResponse.ACCEPT
+
+    async def execute_plan_pose_theta_callback(self, goal_handle):
+        self.get_logger().info('🚀 Executing plan_pose_theta...')
+        target_pose = goal_handle.request.pose
+        
+        # --- Step 1: Get current pose ---
+        current_pose = await self.get_current_pose()
+        if current_pose is None:
+            goal_handle.abort()
+            self.get_logger().error("❌ Failed to get current pose.")
+            return self.make_result(False)
+        self.get_logger().info("✅ Got current pose.")
+        
+        # --- Step 2: Compute relative move needed ---
+        dx = target_pose.position.x - current_pose.position.x
+        dy = target_pose.position.y - current_pose.position.y
+        dz = target_pose.position.z - current_pose.position.z
+        
+        # --- Step 3: Split into multiple single-axis moves ---
+        steps = [
+            {"dx": 0.0, "dy": dy, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
+            {"dx": dx, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
+        ]
+        
+        # --- Step 4: Execute each relative move ---
+        for i, step in enumerate(steps):
+            if all(abs(v) < 1e-6 for v in step.values()):
+                continue  # skip near-zero moves
+            self.get_logger().info(f"➡️ Step {i+1}: Moving by {step}")
+            success = await self.call_plan_relative(
+                step["dx"], step["dy"], step["dz"],
+                step["r"], step["p"], step["y"]
+            )
+            if not success:
+                goal_handle.abort()
+                self.get_logger().error(f"❌ Step {i+1} failed.")
+                return self.make_result(False)
+        
+        # -- Step 5: Get current joint angles and compute target joint angles based on theta --
+        current_joint_angles = await self.get_joint_angles()
+        if current_joint_angles is None:
+            goal_handle.abort()
+            self.get_logger().error("❌ Failed to get current joint angles.")
+            return self.make_result(False)
+        self.get_logger().info("✅ Got current joint angles.")
+
+        current_joint_angles[5] = goal_handle.request.theta
+
+        # --- Step 6: Set new joint angles to achieve desired theta ---
+        success = await self.set_joint_angles(current_joint_angles)
+        if not success:
+            goal_handle.abort()
+            self.get_logger().error("❌ Failed to set joint angles for theta adjustment.")
+            return self.make_result(False)
+        
+        # --- Step 7: Move in the z direction
+        success = await self.call_plan_relative(
+                0.0, 0.0, dz, 0.0, 0.0, 0.0
+        )
+        if not success:
+            goal_handle.abort()
+            self.get_logger().error(f"❌ Move in the z direction failed.")
+            return self.make_result(False)
+
+        self.get_logger().info("✅ All steps completed successfully.")
+        goal_handle.succeed()
+        return self.make_result(True)
+
     async def get_current_pose(self):
         """Call /get_current_pose and return Pose if success."""
         if not self.get_current_pose_client.wait_for_server(timeout_sec=5.0):
@@ -106,6 +198,54 @@ class PlanComplexCartesianSteps(Node):
             return None
 
         return result.result.pose
+    
+    async def get_joint_angles(self):
+        """Call /get_joint_angles and return list of joint angles if success."""
+        if not self.get_joint_angles_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error("❌ /get_joint_angles action server not available.")
+            return None
+
+        goal_msg = GetJointAngles.Goal()
+        goal_future = self.get_joint_angles_client.send_goal_async(goal_msg)
+        goal_handle = await goal_future
+
+        if not goal_handle.accepted:
+            self.get_logger().error("❌ /get_joint_angles goal rejected.")
+            return None
+
+        result_future = goal_handle.get_result_async()
+        result = await result_future
+
+        if not result.result.success:
+            self.get_logger().error("❌ /get_joint_angles returned unsuccessful result.")
+            return None
+
+        return result.result.joint_positions
+
+    async def set_joint_angles(self, joint_angles):
+        """Call /set_joint_angles"""
+        if not self.set_joint_angles_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error("❌ /set_joint_angles action server not available.")
+            return None
+
+        goal_msg = SetJointAngles.Goal()
+        goal_msg.joint_positions = joint_angles
+        goal_future = self.set_joint_angles_client.send_goal_async(goal_msg)
+        goal_handle = await goal_future
+
+        if not goal_handle.accepted:
+            self.get_logger().error("❌ /set_joint_angles goal rejected.")
+            return None
+
+        result_future = goal_handle.get_result_async()
+        result = await result_future
+
+        if not result.result.success:
+            self.get_logger().error("❌ /set_joint_angles returned unsuccessful result.")
+            return None
+
+        return result.result.success
+
 
     async def call_plan_relative(self, dx, dy, dz, roll, pitch, yaw):
         """Call /plan_cartesian_relative once and return success."""
