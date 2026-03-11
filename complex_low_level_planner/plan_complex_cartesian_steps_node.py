@@ -121,13 +121,13 @@ class PlanComplexCartesianStepsNode(Node):
         if current_pose is None:
             goal_handle.abort()
             self.get_logger().error("❌ Failed to get current pose.")
-            return self.make_result(False)
+            return self.make_theta_pose_result(False)
         self.get_logger().info("✅ Got current pose.")
         
         # --- Step 2: Compute relative move needed ---
-        dx = target_pose.position.x - current_pose.position.x
-        dy = target_pose.position.y - current_pose.position.y
-        dz = target_pose.position.z - current_pose.position.z
+        dx = target_pose.x - current_pose.position.x
+        dy = target_pose.y - current_pose.position.y
+        dz = target_pose.z - current_pose.position.z
         
         # --- Step 3: Split into multiple single-axis moves ---
         steps = [
@@ -147,24 +147,26 @@ class PlanComplexCartesianStepsNode(Node):
             if not success:
                 goal_handle.abort()
                 self.get_logger().error(f"❌ Step {i+1} failed.")
-                return self.make_result(False)
+                return self.make_theta_pose_result(False)
         
         # -- Step 5: Get current joint angles and compute target joint angles based on theta --
         current_joint_angles = await self.get_joint_angles()
         if current_joint_angles is None:
             goal_handle.abort()
             self.get_logger().error("❌ Failed to get current joint angles.")
-            return self.make_result(False)
+            return self.make_theta_pose_result(False)
         self.get_logger().info("✅ Got current joint angles.")
 
-        current_joint_angles[5] = goal_handle.request.theta
+        self.get_logger().info(f"Current joint angles: {current_joint_angles}")
+        current_joint_angles[5] = goal_handle.request.pose.theta
+        self.get_logger().info(f"Target joint angles for theta adjustment: {current_joint_angles}")
 
         # --- Step 6: Set new joint angles to achieve desired theta ---
         success = await self.set_joint_angles(current_joint_angles)
         if not success:
             goal_handle.abort()
             self.get_logger().error("❌ Failed to set joint angles for theta adjustment.")
-            return self.make_result(False)
+            return self.make_theta_pose_result(False)
         
         # --- Step 7: Move in the z direction
         success = await self.call_plan_relative(
@@ -173,11 +175,11 @@ class PlanComplexCartesianStepsNode(Node):
         if not success:
             goal_handle.abort()
             self.get_logger().error(f"❌ Move in the z direction failed.")
-            return self.make_result(False)
+            return self.make_theta_pose_result(False)
 
         self.get_logger().info("✅ All steps completed successfully.")
         goal_handle.succeed()
-        return self.make_result(True)
+        return self.make_theta_pose_result(True)
 
     async def get_current_pose(self):
         """Call /get_current_pose and return Pose if success."""
@@ -357,6 +359,11 @@ class PlanComplexCartesianStepsNode(Node):
     def make_result(self, success: bool):
         from custom_interfaces.action import PlanComplexCartesianSteps
         result = PlanComplexCartesianSteps.Result()
+        result.success = success
+        return result
+    
+    def make_theta_pose_result(self, success: bool):
+        result = PlanPoseTheta.Result()
         result.success = success
         return result
 
