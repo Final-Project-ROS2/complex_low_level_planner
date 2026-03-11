@@ -8,6 +8,7 @@ from custom_interfaces.action import MoveitRelative, GetCurrentPose
 
 import math
 
+
 class PlanComplexCartesianSteps(Node):
     def __init__(self):
         super().__init__('plan_complex_cartesian_steps_node')
@@ -68,8 +69,17 @@ class PlanComplexCartesianSteps(Node):
             target_pose.orientation.z,
             target_pose.orientation.w
         ]
+
+        q_current = self.normalize_quaternion(q_current)
+        q_target = self.normalize_quaternion(q_target)
         
         q_relative = self.quaternion_multiply(self.quaternion_inverse(q_current), q_target)
+        q_relative = self.normalize_quaternion(q_relative)
+
+        # q and -q represent the same rotation. Prefer w >= 0 to reduce
+        # discontinuities when converting to Euler near 180-degree rotations.
+        if q_relative[3] < 0.0:
+            q_relative = [-q_relative[0], -q_relative[1], -q_relative[2], -q_relative[3]]
         
         # Convert the RELATIVE rotation to Euler for the move command
         relative_rpy = self.quaternion_to_euler_from_list(q_relative)
@@ -168,7 +178,16 @@ class PlanComplexCartesianSteps(Node):
 
     def quaternion_inverse(self, q):
         """Returns the inverse of quaternion [x, y, z, w]"""
-        return [-q[0], -q[1], -q[2], q[3]]
+        x, y, z, w = self.normalize_quaternion(q)
+        return [-x, -y, -z, w]
+
+    def normalize_quaternion(self, q):
+        """Normalize quaternion [x, y, z, w]."""
+        x, y, z, w = q
+        n = math.sqrt(x * x + y * y + z * z + w * w)
+        if n < 1e-12:
+            return [0.0, 0.0, 0.0, 1.0]
+        return [x / n, y / n, z / n, w / n]
 
     def quaternion_multiply(self, q1, q2):
         """Multiply two quaternions [x, y, z, w]"""
