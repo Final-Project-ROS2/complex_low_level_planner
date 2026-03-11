@@ -167,7 +167,7 @@ class PlanComplexCartesianStepsNode(Node):
 
         self.get_logger().info(f"Current joint angles: {current_joint_angles}")
         target_joint_angles = list(current_joint_angles)
-        target_joint_angles[5] = target_theta
+        target_joint_angles[5] = math.pi - target_theta
         self.get_logger().info(
             f"Target joint angles for theta adjustment: {target_joint_angles}"
         )
