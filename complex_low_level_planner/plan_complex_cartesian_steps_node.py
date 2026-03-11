@@ -115,6 +115,7 @@ class PlanComplexCartesianStepsNode(Node):
     async def execute_plan_pose_theta_callback(self, goal_handle):
         self.get_logger().info('🚀 Executing plan_pose_theta...')
         target_pose = goal_handle.request.pose
+        target_theta = float(target_pose.theta)
         
         # --- Step 1: Get current pose ---
         current_pose = await self.get_current_pose()
@@ -157,25 +158,43 @@ class PlanComplexCartesianStepsNode(Node):
             return self.make_theta_pose_result(False)
         self.get_logger().info("✅ Got current joint angles.")
 
+        if len(current_joint_angles) < 6:
+            goal_handle.abort()
+            self.get_logger().error(
+                f"❌ Invalid joint angle list length: {len(current_joint_angles)}"
+            )
+            return self.make_theta_pose_result(False)
+
         self.get_logger().info(f"Current joint angles: {current_joint_angles}")
-        current_joint_angles[5] = goal_handle.request.pose.theta
-        self.get_logger().info(f"Target joint angles for theta adjustment: {current_joint_angles}")
+        target_joint_angles = list(current_joint_angles)
+        target_joint_angles[5] = target_theta
+        self.get_logger().info(
+            f"Target joint angles for theta adjustment: {target_joint_angles}"
+        )
 
         # --- Step 6: Set new joint angles to achieve desired theta ---
-        success = await self.set_joint_angles(current_joint_angles)
+        self.get_logger().info(
+            "➡️ Step 6: Sending /set_joint_angles for wrist theta adjustment."
+        )
+        success = await self.set_joint_angles(target_joint_angles)
         if not success:
             goal_handle.abort()
             self.get_logger().error("❌ Failed to set joint angles for theta adjustment.")
             return self.make_theta_pose_result(False)
+        self.get_logger().info("✅ Step 6 completed: /set_joint_angles succeeded.")
         
         # --- Step 7: Move in the z direction
-        success = await self.call_plan_relative(
-                0.0, 0.0, dz, 0.0, 0.0, 0.0
-        )
-        if not success:
-            goal_handle.abort()
-            self.get_logger().error(f"❌ Move in the z direction failed.")
-            return self.make_theta_pose_result(False)
+        if abs(dz) >= 1e-6:
+            self.get_logger().info(f"➡️ Step 7: Moving in z by dz={dz:.6f}")
+            success = await self.call_plan_relative(
+                    0.0, 0.0, dz, 0.0, 0.0, 0.0
+            )
+            if not success:
+                goal_handle.abort()
+                self.get_logger().error("❌ Move in the z direction failed.")
+                return self.make_theta_pose_result(False)
+        else:
+            self.get_logger().info("➡️ Step 7: Skipping near-zero z move.")
 
         self.get_logger().info("✅ All steps completed successfully.")
         goal_handle.succeed()
@@ -225,10 +244,13 @@ class PlanComplexCartesianStepsNode(Node):
             self.get_logger().error("❌ /get_joint_angles returned unsuccessful result.")
             return None
 
-        return result.result.joint_positions
+        return list(result.result.joint_positions)
 
     async def set_joint_angles(self, joint_angles):
         """Call /set_joint_angles"""
+        self.get_logger().info(
+            f"[set_joint_angles] Requesting /set_joint_angles with joints={list(joint_angles)}"
+        )
         if not self.set_joint_angles_client.wait_for_server(timeout_sec=5.0):
             self.get_logger().error("❌ /set_joint_angles action server not available.")
             return None
@@ -242,12 +264,16 @@ class PlanComplexCartesianStepsNode(Node):
             self.get_logger().error("❌ /set_joint_angles goal rejected.")
             return None
 
+        self.get_logger().info("[set_joint_angles] Goal accepted by /set_joint_angles")
+
         result_future = goal_handle.get_result_async()
         result = await result_future
 
         if not result.result.success:
             self.get_logger().error("❌ /set_joint_angles returned unsuccessful result.")
             return None
+
+        self.get_logger().info("[set_joint_angles] /set_joint_angles finished successfully")
 
         return result.result.success
 
