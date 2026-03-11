@@ -11,7 +11,7 @@ from custom_interfaces.action import PlanComplexCartesianSteps, PlanPoseTheta
 
 import math
 
-class PlanComplexCartesianSteps(Node):
+class PlanComplexCartesianStepsNode(Node):
     def __init__(self):
         super().__init__('plan_complex_cartesian_steps_node')
 
@@ -360,7 +360,7 @@ class PlanComplexCartesianSteps(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = PlanComplexCartesianSteps()
+    node = PlanComplexCartesianStepsNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
