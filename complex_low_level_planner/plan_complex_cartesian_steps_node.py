@@ -74,17 +74,20 @@ class PlanComplexCartesianStepsNode(Node):
         steps = [
             {"dx": 0.0, "dy": dy, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
             {"dx": dx, "dy": 0.0, "dz": 0.0, "r": 0.0, "p": 0.0, "y": 0.0},
-            {"dx": 0.0, "dy": 0.0, "dz": 0.0, "orientation": target_pose.orientation},  # orientation move as a separate step
             {"dx": 0.0, "dy": 0.0, "dz": dz, "r": 0.0, "p": 0.0, "y": 0.0},
+            {"dx": 0.0, "dy": 0.0, "dz": 0.0, "orientation": target_pose.orientation},  # orientation move as a separate step
         ]
         
         # --- Step 4: Execute each relative move ---
         for i, step in enumerate(steps):
-            if all(abs(v) < 1e-6 for v in step.values()):
+            if "orientation" not in step and all(abs(v) < 1e-6 for v in step.values() if isinstance(v, (int, float))):
+                self.get_logger().info(f"➡️ Step {i+1}: Skipping near-zero move {step}")
                 continue  # skip near-zero moves
             self.get_logger().info(f"➡️ Step {i+1}: Moving by {step}")
             if "orientation" in step:
-                success = await self.call_plan_pose(step["orientation"])
+                pose = await self.get_current_pose()
+                pose.orientation = step["orientation"]
+                success = await self.call_plan_pose(pose)
             else:
                 success = await self.call_plan_relative(
                     step["dx"], step["dy"], step["dz"],
@@ -134,7 +137,7 @@ class PlanComplexCartesianStepsNode(Node):
         
         # --- Step 4: Execute each relative move ---
         for i, step in enumerate(steps):
-            if all(abs(v) < 1e-6 for v in step.values()):
+            if all(abs(v) < 1e-6 for v in step.values() if isinstance(v, (int, float))):
                 continue  # skip near-zero moves
             self.get_logger().info(f"➡️ Step {i+1}: Moving by {step}")
             success = await self.call_plan_relative(
@@ -279,7 +282,7 @@ class PlanComplexCartesianStepsNode(Node):
             return False
 
         goal_msg = MoveitPose.Goal()
-        goal_msg.target_pose = target_pose
+        goal_msg.pose = target_pose
 
         goal_future = self.plan_pose_client.send_goal_async(goal_msg)
         goal_handle = await goal_future
